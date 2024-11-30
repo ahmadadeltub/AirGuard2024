@@ -1,0 +1,86 @@
+import serial
+import time
+import requests
+
+# Telegram Bot credentials
+BOT_TOKEN = "8140614066:AAF5ed5IzM7Nih7Ad_Xq2oBnuUR2e2rpgsE"
+CHAT_ID = "1337613901"
+TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+# Serial communication with MKR1000
+SERIAL_PORT = "/dev/serial0"  # Raspberry Pi serial port
+BAUD_RATE = 9600
+
+# Function to send Telegram message
+def send_telegram_message(message):
+    try:
+        payload = {"chat_id": CHAT_ID, "text": message}
+        response = requests.post(TELEGRAM_URL, data=payload)
+        if response.status_code == 200:
+            print(f"Telegram message sent: {message}")
+        else:
+            print(f"Failed to send Telegram message. Status: {response.status_code}")
+            print(response.text)
+    except Exception as e:
+        print(f"Error sending Telegram message: {e}")
+
+# Function to parse sensor data
+def parse_sensor_data(data):
+    try:
+        sensor_values = {}
+        for item in data.split(","):
+            key, value = item.split(":")
+            sensor_values[key.strip()] = value.strip()
+        return sensor_values
+    except Exception as e:
+        print(f"Error parsing sensor data: {e}")
+        return {}
+
+# Initialize serial communication
+try:
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+    print("Connected to MKR1000 via Serial.")
+    send_telegram_message("AirGuard System is now ONLINE.")
+except Exception as e:
+    print(f"Error connecting to MKR1000: {e}")
+    exit()
+
+# Main loop
+try:
+    while True:
+        if ser.in_waiting > 0:
+            line = ser.readline().decode("ascii", errors="ignore").strip()
+            print(f"Received: {line}")
+
+            sensor_data = parse_sensor_data(line)
+            
+            # Check for abnormal values
+            abnormal_messages = []
+            if "CO2" in sensor_data and int(sensor_data["CO2"]) > 800:
+                abnormal_messages.append("High CO2 Level detected!")
+            if "MQ135" in sensor_data and int(sensor_data["MQ135"]) > 200:
+                abnormal_messages.append("High MQ-135 Level detected!")
+            if "MQ2" in sensor_data and int(sensor_data["MQ2"]) > 500:
+                abnormal_messages.append("High MQ-2 Level detected!")
+            if "MQ7" in sensor_data and int(sensor_data["MQ7"]) > 500:
+                abnormal_messages.append("High MQ-7 Level detected!")
+            if "MQ8" in sensor_data and int(sensor_data["MQ8"]) > 500:
+                abnormal_messages.append("High MQ-8 Level detected!")
+            if "MQ6" in sensor_data and int(sensor_data["MQ6"]) > 500:
+                abnormal_messages.append("High MQ-6 Level detected!")
+            if "MQ9" in sensor_data and int(sensor_data["MQ9"]) > 500:
+                abnormal_messages.append("High MQ-9 Level detected!")
+            if "Flame" in sensor_data and sensor_data["Flame"] == "Yes":
+                abnormal_messages.append("Flame detected!")
+
+            # Send Telegram messages for abnormalities
+            for msg in abnormal_messages:
+                send_telegram_message(msg)
+        
+        time.sleep(1)
+
+except KeyboardInterrupt:
+    print("System shutting down.")
+    send_telegram_message("AirGuard System is now OFFLINE.")
+    ser.close()
+
