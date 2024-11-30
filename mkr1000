@@ -1,0 +1,200 @@
+#include "thingProperties.h"
+#include <DHT.h>
+#include <hd44780.h>
+#include <hd44780ioClass/hd44780_I2Cexp.h>
+
+// Define Sensor Pins
+#define DHTPIN 4
+#define DHTTYPE DHT11
+#define CO2_PIN A0
+#define MQ135_PIN A4
+#define MQ2_PIN A6
+#define MQ7_PIN A1
+#define MQ8_PIN A2
+#define MQ6_PIN A3
+#define MQ9_PIN A5
+#define FLAME_SENSOR_PIN 6
+
+// RGB LED Pins
+#define LED_RED 2
+#define LED_GREEN 3
+#define LED_BLUE 4
+
+// Buzzer Pin
+#define BUZZER_PIN 5
+
+// Keystudio 3W LED Module Pin
+#define KEYS_LED_PIN 7
+
+// LCD
+hd44780_I2Cexp lcd;
+
+// DHT Sensor
+DHT dht(DHTPIN, DHTTYPE);
+
+void setup() {
+    // Initialize Serial Monitors
+    Serial.begin(9600); // For debugging
+    Serial1.begin(9600); // For communication with Raspberry Pi
+
+    // Initialize IoT Cloud
+    setDebugMessageLevel(2);
+    initProperties(); // Initialize cloud properties
+    ArduinoCloud.begin(ArduinoIoTPreferredConnection);
+
+    // Initialize DHT Sensor
+    dht.begin();
+
+    // Initialize LCD
+    lcd.begin(20, 4);
+    lcd.backlight();
+
+    // Initialize RGB LED, Buzzer, and Keystudio LED Pins
+    pinMode(LED_RED, OUTPUT);
+    pinMode(LED_GREEN, OUTPUT);
+    pinMode(LED_BLUE, OUTPUT);
+    pinMode(BUZZER_PIN, OUTPUT);
+    pinMode(FLAME_SENSOR_PIN, INPUT);
+    pinMode(KEYS_LED_PIN, OUTPUT);
+
+    // Display Welcome Message
+    lcd.clear();
+    lcd.setCursor(4, 0);
+    lcd.print("WELCOME");
+    lcd.setCursor(1, 1);
+    lcd.print("AirGuard System");
+    lcd.setCursor(2, 2);
+    lcd.print("Initializing...");
+    delay(3000);
+    lcd.clear();
+}
+
+void loop() {
+    // Update IoT Cloud
+    ArduinoCloud.update();
+
+    // Read Sensors
+    temperature = dht.readTemperature();  // Update IoT Cloud variable
+    humidity = dht.readHumidity();        // Update IoT Cloud variable
+    co2_value = analogRead(CO2_PIN);      // Update IoT Cloud variable
+    mq135_value = analogRead(MQ135_PIN) / 2; // Update IoT Cloud variable
+    mq2_value = analogRead(MQ2_PIN);      // Update IoT Cloud variable
+    mq7_value = analogRead(MQ7_PIN);      // Update IoT Cloud variable
+    mq8_value = analogRead(MQ8_PIN);      // Update IoT Cloud variable
+    mq6_value = analogRead(MQ6_PIN);      // Update IoT Cloud variable
+    mq9_value = analogRead(MQ9_PIN);      // Update IoT Cloud variable
+    flame_detected = digitalRead(FLAME_SENSOR_PIN) == 0; // Update IoT Cloud variable
+
+    // Serialize data for Raspberry Pi
+    String data = "Temp:" + String(temperature, 1) +
+                  ",Hum:" + String(humidity, 1) +
+                  ",CO2:" + String(co2_value) +
+                  ",MQ135:" + String(mq135_value) +
+                  ",MQ2:" + String(mq2_value) +
+                  ",MQ7:" + String(mq7_value) +
+                  ",MQ8:" + String(mq8_value) +
+                  ",MQ6:" + String(mq6_value) +
+                  ",MQ9:" + String(mq9_value) +
+                  ",Flame:" + String(flame_detected ? "Yes" : "No");
+    Serial1.println(data); // Send data to Raspberry Pi
+
+    // Check for Abnormalities
+    bool sensor_alert = false;
+    String alert_message = "";
+
+    if (co2_value > 800) {
+        alert_message = "ALERT: High CO2 Level!";
+        sensor_alert = true;
+    } else if (mq135_value > 200) {
+        alert_message = "ALERT: High MQ-135 Level!";
+        sensor_alert = true;
+    } else if (mq2_value > 500) {
+        alert_message = "ALERT: High MQ-2 Level!";
+        sensor_alert = true;
+    } else if (mq7_value > 500) {
+        alert_message = "ALERT: High MQ-7 Level!";
+        sensor_alert = true;
+    } else if (mq8_value > 500) {
+        alert_message = "ALERT: High MQ-8 Level!";
+        sensor_alert = true;
+    } else if (mq6_value > 500) {
+        alert_message = "ALERT: High MQ-6 Level!";
+        sensor_alert = true;
+    } else if (mq9_value > 500) {
+        alert_message = "ALERT: High MQ-9 Level!";
+        sensor_alert = true;
+    } else if (flame_detected) {
+        alert_message = "ALERT: Flame Detected!";
+        sensor_alert = true;
+    }
+
+    // Alert Actions
+    if (sensor_alert) {
+        // Trigger Red LED, Buzzer, and Display Alert on LCD
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_RED, HIGH);
+        tone(BUZZER_PIN, 1000); // 1 kHz tone
+
+        // Blink the Keystudio LED
+        digitalWrite(KEYS_LED_PIN, HIGH);
+        delay(500);
+        digitalWrite(KEYS_LED_PIN, LOW);
+        delay(500);
+
+        // Display Warning on LCD
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("WARNING!");
+        lcd.setCursor(0, 1);
+        lcd.print(alert_message);
+        lcd.setCursor(0, 2);
+        lcd.print("Leave the room!");
+        delay(5000); // Keep alert for 5 seconds
+        noTone(BUZZER_PIN);
+    } else {
+        // Normal Operation
+        digitalWrite(LED_GREEN, HIGH);
+        digitalWrite(LED_RED, LOW);
+        noTone(BUZZER_PIN);
+
+        // Turn on Keystudio LED
+        digitalWrite(KEYS_LED_PIN, HIGH);
+
+        // Display Sensor Values on LCD
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Temp: ");
+        lcd.print(temperature, 1);
+        lcd.print("C Hum: ");
+        lcd.print(humidity, 1);
+        lcd.print("%");
+
+        lcd.setCursor(0, 1);
+        lcd.print("CO2: ");
+        lcd.print(co2_value);
+        lcd.print(" MQ135: ");
+        lcd.print(mq135_value);
+
+        lcd.setCursor(0, 2);
+        lcd.print("MQ2: ");
+        lcd.print(mq2_value);
+        lcd.print(" MQ7: ");
+        lcd.print(mq7_value);
+
+        lcd.setCursor(0, 3);
+        lcd.print("MQ8: ");
+        lcd.print(mq8_value);
+        lcd.print(" MQ6: ");
+        lcd.print(mq6_value);
+
+        delay(3000); // Delay for readability
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("MQ9: ");
+        lcd.print(mq9_value);
+        lcd.print(" Flame: ");
+        lcd.print(flame_detected ? "Yes" : "No");
+        delay(3000);
+    }
+}
