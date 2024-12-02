@@ -173,10 +173,14 @@ void loop() {
     // Update LED status
     if (sensor_alert) {
         digitalWrite(LED_RED, HIGH);
+        
         digitalWrite(LED_GREEN, LOW);
+      
     } else {
         digitalWrite(LED_GREEN, HIGH);
+     
         digitalWrite(LED_RED, LOW);
+    
     }
 }
 
