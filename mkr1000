@@ -18,7 +18,7 @@
 // RGB LED Pins
 #define LED_RED 2
 #define LED_GREEN 3
-#define LED_BLUE 4
+#define LED_BLUE 1
 
 // Buzzer Pin
 #define BUZZER_PIN 5
@@ -32,14 +32,19 @@ hd44780_I2Cexp lcd;
 // DHT Sensor
 DHT dht(DHTPIN, DHTTYPE);
 
+// Page cycling variables
+int lcdPage = 0;
+unsigned long lastLcdUpdate = 0;
+const unsigned long lcdUpdateInterval = 2000; // 2 seconds per page
+
 void setup() {
     // Initialize Serial Monitors
-    Serial.begin(9600); // For debugging
+    Serial.begin(9600);
     Serial1.begin(9600); // For communication with Raspberry Pi
 
     // Initialize IoT Cloud
     setDebugMessageLevel(2);
-    initProperties(); // Initialize cloud properties
+    initProperties();
     ArduinoCloud.begin(ArduinoIoTPreferredConnection);
 
     // Initialize DHT Sensor
@@ -67,6 +72,9 @@ void setup() {
     lcd.print("Initializing...");
     delay(3000);
     lcd.clear();
+
+    // Send System Online Message
+    Serial1.println("System Online: AirGuard is now ACTIVE.");
 }
 
 void loop() {
@@ -98,103 +106,92 @@ void loop() {
                   ",Flame:" + String(flame_detected ? "Yes" : "No");
     Serial1.println(data); // Send data to Raspberry Pi
 
+    // Update LCD with sensor values
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastLcdUpdate >= lcdUpdateInterval) {
+        lastLcdUpdate = currentMillis;
+        lcd.clear();
+
+        switch (lcdPage) {
+            case 0: // Page 1
+                lcd.setCursor(0, 0);
+                lcd.print("Temp:");
+                lcd.print(temperature, 1);
+                lcd.print("C Hum:");
+                lcd.print(humidity, 1);
+                lcd.setCursor(0, 1);
+                lcd.print("CO2:");
+                lcd.print(co2_value);
+                lcd.print(" MQ135:");
+                lcd.print(mq135_value);
+                break;
+
+            case 1: // Page 2
+                lcd.setCursor(0, 0);
+                lcd.print("MQ2:");
+                lcd.print(mq2_value);
+                lcd.print(" MQ7:");
+                lcd.print(mq7_value);
+                lcd.setCursor(0, 1);
+                lcd.print("MQ8:");
+                lcd.print(mq8_value);
+                lcd.print(" MQ6:");
+                lcd.print(mq6_value);
+                lcd.setCursor(0, 2);
+                lcd.print("MQ9:");
+                lcd.print(mq9_value);
+                lcd.print(" Flame:");
+                lcd.print(flame_detected ? "Yes" : "No");
+                break;
+
+            default:
+                lcdPage = -1; // Reset the cycle
+        }
+        lcdPage++;
+    }
+
     // Check for Abnormalities
     bool sensor_alert = false;
-    String alert_message = "";
 
-    if (co2_value > 800) {
-        alert_message = "ALERT: High CO2 Level!";
+    if (flame_detected) {
         sensor_alert = true;
-    } else if (mq135_value > 200) {
-        alert_message = "ALERT: High MQ-135 Level!";
+        sendAlert("Flame Detected!");
+    } else if (co2_value > 800 || mq135_value > 200 || mq2_value > 500 ||
+               mq7_value > 500 || mq8_value > 500 || mq6_value > 500 || mq9_value > 500) {
         sensor_alert = true;
-    } else if (mq2_value > 500) {
-        alert_message = "ALERT: High MQ-2 Level!";
-        sensor_alert = true;
-    } else if (mq7_value > 500) {
-        alert_message = "ALERT: High MQ-7 Level!";
-        sensor_alert = true;
-    } else if (mq8_value > 500) {
-        alert_message = "ALERT: High MQ-8 Level!";
-        sensor_alert = true;
-    } else if (mq6_value > 500) {
-        alert_message = "ALERT: High MQ-6 Level!";
-        sensor_alert = true;
-    } else if (mq9_value > 500) {
-        alert_message = "ALERT: High MQ-9 Level!";
-        sensor_alert = true;
-    } else if (flame_detected) {
-        alert_message = "ALERT: Flame Detected!";
-        sensor_alert = true;
+        String alert = "Sensor Abnormality: ";
+        if (co2_value > 800) alert += "High CO2! ";
+        if (mq135_value > 200) alert += "High MQ135! ";
+        if (mq2_value > 800) alert += "High MQ2! ";
+        if (mq7_value > 500) alert += "High MQ7! ";
+        if (mq8_value > 500) alert += "High MQ8! ";
+        if (mq6_value > 500) alert += "High MQ6! ";
+        if (mq9_value > 500) alert += "High MQ9! ";
+        sendAlert(alert);
     }
 
-    // Alert Actions
+    // Update LED status
     if (sensor_alert) {
-        // Trigger Red LED, Buzzer, and Display Alert on LCD
-        digitalWrite(LED_GREEN, LOW);
         digitalWrite(LED_RED, HIGH);
-        tone(BUZZER_PIN, 1000); // 1 kHz tone
-
-        // Blink the Keystudio LED
-        digitalWrite(KEYS_LED_PIN, HIGH);
-        delay(500);
-        digitalWrite(KEYS_LED_PIN, LOW);
-        delay(500);
-
-        // Display Warning on LCD
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("WARNING!");
-        lcd.setCursor(0, 1);
-        lcd.print(alert_message);
-        lcd.setCursor(0, 2);
-        lcd.print("Leave the room!");
-        delay(5000); // Keep alert for 5 seconds
-        noTone(BUZZER_PIN);
+        digitalWrite(LED_GREEN, LOW);
     } else {
-        // Normal Operation
         digitalWrite(LED_GREEN, HIGH);
         digitalWrite(LED_RED, LOW);
-        noTone(BUZZER_PIN);
-
-        // Turn on Keystudio LED
-        digitalWrite(KEYS_LED_PIN, HIGH);
-
-        // Display Sensor Values on LCD
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Temp: ");
-        lcd.print(temperature, 1);
-        lcd.print("C Hum: ");
-        lcd.print(humidity, 1);
-        lcd.print("%");
-
-        lcd.setCursor(0, 1);
-        lcd.print("CO2: ");
-        lcd.print(co2_value);
-        lcd.print(" MQ135: ");
-        lcd.print(mq135_value);
-
-        lcd.setCursor(0, 2);
-        lcd.print("MQ2: ");
-        lcd.print(mq2_value);
-        lcd.print(" MQ7: ");
-        lcd.print(mq7_value);
-
-        lcd.setCursor(0, 3);
-        lcd.print("MQ8: ");
-        lcd.print(mq8_value);
-        lcd.print(" MQ6: ");
-        lcd.print(mq6_value);
-
-        delay(3000); // Delay for readability
-
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("MQ9: ");
-        lcd.print(mq9_value);
-        lcd.print(" Flame: ");
-        lcd.print(flame_detected ? "Yes" : "No");
-        delay(3000);
     }
+}
+
+void sendAlert(String message) {
+    // Display Warning on LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("WARNING!");
+    lcd.setCursor(0, 1);
+    lcd.print(message);
+    lcd.setCursor(0, 2);
+    lcd.print("Leave the room!");
+    tone(BUZZER_PIN, 1000, 3000); // 3-second alert
+    delay(3000);
+
+    // Send Message to Raspberry Pi
+    Serial1.println(message);
 }
