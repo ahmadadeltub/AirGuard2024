@@ -2,6 +2,8 @@
 #include <DHT.h>
 #include <hd44780.h>
 #include <hd44780ioClass/hd44780_I2Cexp.h>
+#include <WiFi101.h>
+#include <WiFiSSLClient.h>
 
 // Define Sensor Pins
 #define DHTPIN 4
@@ -23,24 +25,34 @@
 // Buzzer Pin
 #define BUZZER_PIN 5
 
-// Keystudio 3W LED Module Pin
-#define KEYS_LED_PIN 7
-
 // LCD
 hd44780_I2Cexp lcd;
 
 // DHT Sensor
 DHT dht(DHTPIN, DHTTYPE);
 
+// Telegram Bot Credentials
+const char* botToken = "8140614066:AAF5ed5IzM7Nih7Ad_Xq2oBnuUR2e2rpgsE";
+const char* chatID = "1337613901";
+
 // Page cycling variables
 int lcdPage = 0;
 unsigned long lastLcdUpdate = 0;
 const unsigned long lcdUpdateInterval = 2000; // 2 seconds per page
 
+// Variables to track notifications
+bool flameNotified = false;
+bool co2Notified = false;
+bool mq135Notified = false;
+bool mq2Notified = false;
+bool mq7Notified = false;
+bool mq8Notified = false;
+bool mq6Notified = false;
+bool mq9Notified = false;
+
 void setup() {
-    // Initialize Serial Monitors
+    // Initialize Serial Monitor
     Serial.begin(9600);
-    Serial1.begin(9600); // For communication with Raspberry Pi
 
     // Initialize IoT Cloud
     setDebugMessageLevel(2);
@@ -54,13 +66,12 @@ void setup() {
     lcd.begin(20, 4);
     lcd.backlight();
 
-    // Initialize RGB LED, Buzzer, and Keystudio LED Pins
+    // Initialize RGB LED, Buzzer, and Flame Sensor Pins
     pinMode(LED_RED, OUTPUT);
     pinMode(LED_GREEN, OUTPUT);
     pinMode(LED_BLUE, OUTPUT);
     pinMode(BUZZER_PIN, OUTPUT);
     pinMode(FLAME_SENSOR_PIN, INPUT);
-    pinMode(KEYS_LED_PIN, OUTPUT);
 
     // Display Welcome Message
     lcd.clear();
@@ -73,8 +84,8 @@ void setup() {
     delay(3000);
     lcd.clear();
 
-    // Send System Online Message
-    Serial1.println("System Online: AirGuard is now ACTIVE.");
+    Serial.println("System Online: AirGuard is now ACTIVE.");
+    sendTelegramMessage("AirGuard System is now ACTIVE.");
 }
 
 void loop() {
@@ -82,31 +93,31 @@ void loop() {
     ArduinoCloud.update();
 
     // Read Sensors
-    temperature = dht.readTemperature();  // Update IoT Cloud variable
-    humidity = dht.readHumidity();        // Update IoT Cloud variable
-    co2_value = analogRead(CO2_PIN);      // Update IoT Cloud variable
-    mq135_value = analogRead(MQ135_PIN) / 2; // Update IoT Cloud variable
-    mq2_value = analogRead(MQ2_PIN);      // Update IoT Cloud variable
-    mq7_value = analogRead(MQ7_PIN);      // Update IoT Cloud variable
-    mq8_value = analogRead(MQ8_PIN);      // Update IoT Cloud variable
-    mq6_value = analogRead(MQ6_PIN);      // Update IoT Cloud variable
-    mq9_value = analogRead(MQ9_PIN);      // Update IoT Cloud variable
-    flame_detected = digitalRead(FLAME_SENSOR_PIN) == 0; // Update IoT Cloud variable
+    float temperature = dht.readTemperature();
+    float humidity = dht.readHumidity();
+    int co2_value = analogRead(CO2_PIN);
+    int mq135_value = analogRead(MQ135_PIN) / 2;
+    int mq2_value = analogRead(MQ2_PIN);
+    int mq7_value = analogRead(MQ7_PIN);
+    int mq8_value = analogRead(MQ8_PIN);
+    int mq6_value = analogRead(MQ6_PIN);
+    int mq9_value = analogRead(MQ9_PIN);
+    bool flame_detected = digitalRead(FLAME_SENSOR_PIN) == 0;
 
-    // Serialize data for Raspberry Pi
-    String data = "Temp:" + String(temperature, 1) +
-                  ",Hum:" + String(humidity, 1) +
-                  ",CO2:" + String(co2_value) +
-                  ",MQ135:" + String(mq135_value) +
-                  ",MQ2:" + String(mq2_value) +
-                  ",MQ7:" + String(mq7_value) +
-                  ",MQ8:" + String(mq8_value) +
-                  ",MQ6:" + String(mq6_value) +
-                  ",MQ9:" + String(mq9_value) +
-                  ",Flame:" + String(flame_detected ? "Yes" : "No");
-    Serial1.println(data); // Send data to Raspberry Pi
+    // Update IoT Cloud variables
+// Update IoT Cloud variables with sensor data
+::temperature = temperature;  // Update IoT Cloud variable with sensor data
+::humidity = humidity;
+::co2_value = co2_value;
+::mq135_value = mq135_value;
+::mq2_value = mq2_value;
+::mq7_value = mq7_value;
+::mq8_value = mq8_value;
+::mq6_value = mq6_value;
+::mq9_value = mq9_value;
+::flame_detected = flame_detected;
 
-    // Update LCD with sensor values
+    // Display Sensor Values on LCD
     unsigned long currentMillis = millis();
     if (currentMillis - lastLcdUpdate >= lcdUpdateInterval) {
         lastLcdUpdate = currentMillis;
@@ -150,41 +161,86 @@ void loop() {
         lcdPage++;
     }
 
-    // Check for Abnormalities
+    // Handle Abnormal Sensor Values and Alerts
     bool sensor_alert = false;
 
-    if (flame_detected) {
-        sensor_alert = true;
-        sendAlert("Flame Detected!");
-    } else if (co2_value > 800 || mq135_value > 200 || mq2_value > 500 ||
-               mq7_value > 500 || mq8_value > 500 || mq6_value > 500 || mq9_value > 500) {
-        sensor_alert = true;
-        String alert = "Sensor Abnormality: ";
-        if (co2_value > 800) alert += "High CO2! ";
-        if (mq135_value > 200) alert += "High MQ135! ";
-        if (mq2_value > 800) alert += "High MQ2! ";
-        if (mq7_value > 500) alert += "High MQ7! ";
-        if (mq8_value > 500) alert += "High MQ8! ";
-        if (mq6_value > 500) alert += "High MQ6! ";
-        if (mq9_value > 500) alert += "High MQ9! ";
-        sendAlert(alert);
+    if (flame_detected && !flameNotified) {
+        flameNotified = true;
+        sendTelegramMessage("Flame Detected! Leave the room immediately!");
+        triggerAlert("Flame Detected!");
+    } else if (!flame_detected) {
+        flameNotified = false;
     }
 
-    // Update LED status
+    if (co2_value > 800 && !co2Notified) {
+        co2Notified = true;
+        sendTelegramMessage("High CO2 Levels Detected!");
+        triggerAlert("High CO2 Levels!");
+    } else if (co2_value <= 800) {
+        co2Notified = false;
+    }
+
+    if (mq135_value > 200 && !mq135Notified) {
+        mq135Notified = true;
+        sendTelegramMessage("High MQ135 Levels Detected!");
+        triggerAlert("High MQ135 Levels!");
+    } else if (mq135_value <= 200) {
+        mq135Notified = false;
+    }
+
+    if (mq2_value > 500 && !mq2Notified) {
+        mq2Notified = true;
+        sendTelegramMessage("High MQ2 Levels Detected!");
+        triggerAlert("High MQ2 Levels!");
+    } else if (mq2_value <= 500) {
+        mq2Notified = false;
+    }
+
+    if (mq7_value > 500 && !mq7Notified) {
+        mq7Notified = true;
+        sendTelegramMessage("High MQ7 Levels Detected!");
+        triggerAlert("High MQ7 Levels!");
+    } else if (mq7_value <= 500) {
+        mq7Notified = false;
+    }
+
+    if (mq8_value > 500 && !mq8Notified) {
+        mq8Notified = true;
+        sendTelegramMessage("High MQ8 Levels Detected!");
+        triggerAlert("High MQ8 Levels!");
+    } else if (mq8_value <= 500) {
+        mq8Notified = false;
+    }
+
+    if (mq6_value > 500 && !mq6Notified) {
+        mq6Notified = true;
+        sendTelegramMessage("High MQ6 Levels Detected!");
+        triggerAlert("High MQ6 Levels!");
+    } else if (mq6_value <= 500) {
+        mq6Notified = false;
+    }
+
+    if (mq9_value > 500 && !mq9Notified) {
+        mq9Notified = true;
+        sendTelegramMessage("High MQ9 Levels Detected!");
+        triggerAlert("High MQ9 Levels!");
+    } else if (mq9_value <= 500) {
+        mq9Notified = false;
+    }
+
+    // Update LED Status
     if (sensor_alert) {
         digitalWrite(LED_RED, HIGH);
-        
         digitalWrite(LED_GREEN, LOW);
-      
     } else {
         digitalWrite(LED_GREEN, HIGH);
-     
         digitalWrite(LED_RED, LOW);
-    
     }
+
+    delay(2000); // Delay for stability
 }
 
-void sendAlert(String message) {
+void triggerAlert(String message) {
     // Display Warning on LCD
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -193,9 +249,20 @@ void sendAlert(String message) {
     lcd.print(message);
     lcd.setCursor(0, 2);
     lcd.print("Leave the room!");
-    tone(BUZZER_PIN, 1000, 3000); // 3-second alert
-    delay(3000);
+    tone(BUZZER_PIN, 1000, 3000);
+}
 
-    // Send Message to Raspberry Pi
-    Serial1.println(message);
+void sendTelegramMessage(String message) {
+    WiFiSSLClient client;
+    String url = String("https://api.telegram.org/bot") + botToken + "/sendMessage?chat_id=" + chatID + "&text=" + message;
+
+    if (client.connect("api.telegram.org", 443)) {
+        client.println("GET " + url + " HTTP/1.1");
+        client.println("Host: api.telegram.org");
+        client.println("Connection: close");
+        client.println();
+        Serial.println("Telegram message sent: " + message);    
+    } else {
+        Serial.println("Failed to connect to Telegram server.");
+    }
 }
