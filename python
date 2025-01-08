@@ -1,99 +1,139 @@
 import serial
-import requests
+from datetime import datetime
+import pygame
+import RPi.GPIO as GPIO
 import time
 
-# Telegram Bot credentials
-BOT_TOKEN = "8140614066:AAF5ed5IzM7Nih7Ad_Xq2oBnuUR2e2rpgsE"
-CHAT_ID = "1337613901"
-TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-# Serial communication settings
-SERIAL_PORT = "/dev/rfcomm0"
-BAUD_RATE = 9600
-
-# Function to send Telegram message
-def send_telegram_message(message):
-    try:
-        payload = {"chat_id": CHAT_ID, "text": message}
-        response = requests.post(TELEGRAM_URL, data=payload)
-        if response.status_code == 200:
-            print(f"Telegram message sent: {message}")
-        else:
-            print(f"Failed to send Telegram message. Status: {response.status_code}")
-    except requests.exceptions.RequestException as e:
-        print(f"Error sending Telegram message: {e}")
-
-# Function to parse sensor data
-def parse_sensor_data(line):
-    try:
-        sensor_values = {}
-        for item in line.split(","):
-            if ":" in item:
-                key, value = item.split(":")
-                sensor_values[key.strip()] = value.strip()
-        return sensor_values
-    except Exception as e:
-        print(f"Error parsing sensor data: {e}")
-        return {}
-
-# Function to check for abnormal sensor values
-def check_abnormalities(sensor_data):
-    abnormalities = []
-    if "CO2" in sensor_data and int(sensor_data["CO2"]) > 800:
-        abnormalities.append("High CO2 Level detected!")
-    if "MQ135" in sensor_data and int(sensor_data["MQ135"]) > 200:
-        abnormalities.append("High MQ-135 Level detected!")
-    if "MQ2" in sensor_data and int(sensor_data["MQ2"]) > 500:
-        abnormalities.append("High MQ-2 Level detected!")
-    if "MQ7" in sensor_data and int(sensor_data["MQ7"]) > 500:
-        abnormalities.append("High MQ-7 Level detected!")
-    if "MQ8" in sensor_data and int(sensor_data["MQ8"]) > 500:
-        abnormalities.append("High MQ-8 Level detected!")
-    if "MQ6" in sensor_data and int(sensor_data["MQ6"]) > 500:
-        abnormalities.append("High MQ-6 Level detected!")
-    if "MQ9" in sensor_data and int(sensor_data["MQ9"]) > 500:
-        abnormalities.append("High MQ-9 Level detected!")
-    if "Flame" in sensor_data and sensor_data["Flame"] == "Yes":
-        abnormalities.append("Flame detected!")
-    return abnormalities
-
-# Initialize serial communication
-def init_serial():
-    try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        print("Connected to MKR1000 via Bluetooth.")
-        return ser
-    except Exception as e:
-        print(f"Error connecting to MKR1000: {e}")
-        exit()
-
-# Main execution
-ser = init_serial()
+# Set up the serial connection
+serial_port = '/dev/ttyACM0'
+baud_rate = 9600
 
 try:
-    while True:
+    ser = serial.Serial(serial_port, baud_rate, timeout=1)
+    print(f"Connected to {serial_port} at {baud_rate} baud.")
+except serial.SerialException as e:
+    print(f"Error: {e}")
+    exit(1)
+
+# Initialize pygame mixer for playing sound
+pygame.mixer.init()
+
+# Load the warning sound file
+warning_sound_path = "/home/pi/airguard/warning.mp3"
+pygame.mixer.music.load(warning_sound_path)
+
+# GPIO setup for fan and traffic light module
+FAN_PIN = 16
+RED_LED = 25
+YELLOW_LED = 23
+GREEN_LED = 24
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(FAN_PIN, GPIO.OUT)
+GPIO.setup(RED_LED, GPIO.OUT)
+GPIO.setup(YELLOW_LED, GPIO.OUT)
+GPIO.setup(GREEN_LED, GPIO.OUT)
+
+# Functions to control the fan
+def set_fan_state(state):
+    if state == "ON":
+        GPIO.output(FAN_PIN, GPIO.HIGH)
+        print("Fan is ON")
+    elif state == "OFF":
+        GPIO.output(FAN_PIN, GPIO.LOW)
+        print("Fan is OFF")
+
+# Functions to control the traffic light LEDs
+def set_traffic_light(state, duration=0):
+    if state == "GREEN":
+        GPIO.output(GREEN_LED, GPIO.HIGH)
+        GPIO.output(YELLOW_LED, GPIO.LOW)
+        GPIO.output(RED_LED, GPIO.LOW)
+        print("Traffic Light: GREEN")
+    elif state == "YELLOW":
+        GPIO.output(GREEN_LED, GPIO.LOW)
+        GPIO.output(YELLOW_LED, GPIO.HIGH)
+        GPIO.output(RED_LED, GPIO.LOW)
+        print("Traffic Light: YELLOW")
+        time.sleep(duration)
+    elif state == "RED":
+        GPIO.output(GREEN_LED, GPIO.LOW)
+        GPIO.output(YELLOW_LED, GPIO.LOW)
+        GPIO.output(RED_LED, GPIO.HIGH)
+        print("Traffic Light: RED")
+        time.sleep(duration)
+
+# Function to play the warning sound
+def play_warning_sound():
+    if not pygame.mixer.music.get_busy():  # Play only if not already playing
+        pygame.mixer.music.play()
+
+# Function to stop the warning sound
+def stop_warning_sound():
+    if pygame.mixer.music.get_busy():  # Stop only if playing
+        pygame.mixer.music.stop()
+
+# Ensure fan is ON and traffic light is GREEN at the start
+set_fan_state("ON")
+set_traffic_light("GREEN")
+
+# Flags to track abnormal conditions
+flame_detected = False
+abnormal_condition = False
+
+while True:
+    try:
         if ser.in_waiting > 0:
-            line = ser.readline().decode("ascii", errors="ignore").strip()
-            if not line:
-                continue
+            # Read the incoming data
+            line = ser.readline().decode('utf-8').strip()
             print(f"Received: {line}")
 
-            # Parse the received data
-            sensor_data = parse_sensor_data(line)
-            if not sensor_data:
-                continue
+            # Log the data with a timestamp
+            with open("sensor_data.log", "a") as log_file:
+                log_file.write(f"{datetime.now()}, {line}\n")
 
-            print(f"Parsed Data: {sensor_data}")
+            # Check for flame sensor status
+            if "Flame Detected: Yes" in line:
+                if not flame_detected:
+                    print("Flame detected! Playing warning sound...")
+                    play_warning_sound()
+                    flame_detected = True
 
-            # Check for abnormalities
-            abnormalities = check_abnormalities(sensor_data)
-            if abnormalities:
-                warning_message = "WARNING! Abnormal sensor values detected:\n" + "\n".join(abnormalities)
-                print(warning_message)
-                send_telegram_message(warning_message)
+            elif "Flame Detected: No" in line:
+                if flame_detected:
+                    print("Flame cleared! Stopping warning sound...")
+                    stop_warning_sound()
+                    flame_detected = False
 
-except KeyboardInterrupt:
-    print("System shutting down.")
-    send_telegram_message("AirGuard System is now OFFLINE.")
-    ser.close()
+            # Check for other abnormal conditions (e.g., high CO2 or gas levels)
+            if "High" in line:
+                if not abnormal_condition:
+                    print("Abnormal condition detected!")
+                    abnormal_condition = True
+            else:
+                abnormal_condition = False
 
+            # Control the fan and traffic light based on conditions
+            if flame_detected or abnormal_condition:
+                # Turn off the fan for 5 seconds
+                set_fan_state("OFF")
+                print("Fan will remain OFF for 5 seconds...")
+                set_traffic_light("YELLOW", duration=2)  # Yellow for 2 seconds
+                set_traffic_light("RED", duration=5)     # Red for 5 seconds
+                time.sleep(5)  # Fan remains off for 5 seconds
+
+            else:
+                # Normal conditions: Fan ON, Green light ON
+                set_fan_state("ON")
+                set_traffic_light("GREEN")
+
+    except KeyboardInterrupt:
+        print("Exiting program.")
+        GPIO.cleanup()  # Clean up GPIO
+        ser.close()
+        break
+    except Exception as e:
+        print(f"Error: {e}")
+        GPIO.cleanup()  # Clean up GPIO on error
+        ser.close()
+        break
