@@ -103,6 +103,7 @@ void loop() {
     int mq6_value = analogRead(MQ6_PIN);
     int mq9_value = analogRead(MQ9_PIN);
     bool flame_detected = digitalRead(FLAME_SENSOR_PIN) == 0;
+    sendSensorData(temperature, humidity, co2_value, mq135_value, mq2_value, mq7_value, mq8_value, mq6_value, mq9_value, flame_detected);
 
     // Update IoT Cloud variables
 // Update IoT Cloud variables with sensor data
@@ -250,6 +251,29 @@ void triggerAlert(String message) {
     lcd.setCursor(0, 2);
     lcd.print("Leave the room!");
     tone(BUZZER_PIN, 1000, 3000);
+}
+
+void sendSensorData(float temperature, float humidity, int co2, int mq135, int mq2, int mq7, int mq8, int mq6, int mq9, bool flame) {
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.print("C, Humidity: ");
+    Serial.print(humidity);
+    Serial.print("%, CO2: ");
+    Serial.print(co2);
+    Serial.print(", MQ135: ");
+    Serial.print(mq135);
+    Serial.print(", MQ2: ");
+    Serial.print(mq2);
+    Serial.print(", MQ7: ");
+    Serial.print(mq7);
+    Serial.print(", MQ8: ");
+    Serial.print(mq8);
+    Serial.print(", MQ6: ");
+    Serial.print(mq6);
+    Serial.print(", MQ9: ");
+    Serial.print(mq9);
+    Serial.print(", Flame Detected: ");
+    Serial.println(flame ? "Yes" : "No");
 }
 
 void sendTelegramMessage(String message) {
